@@ -1,4 +1,4 @@
-**Opyn Contracts**
+### Opyn Contracts
 ```
 - Controller
 0x4ccc2339F87F6c59c6893E1A678c2266cA58dC72
@@ -23,4 +23,15 @@ getExpiredPayoutRate = 0 USDC
 - oWETHUSDC/USDC-12MAR21-1800P
 0xCf16d3fC24b152b4371042C890EB3E35A2b2BD7e
 getExpiredPayoutRate = 5817378 USDC
+```
+
+### Primitive Contracts
+
+- Trader
+```
+0xc1de48e9577a7cf18594323a73cdcf1ee19962e8
+```
+-  oWETHDAI/DAI-24SEP21-480P
+```
+0x5B83dEc645BE2B8137a20175f59000c20C6dce82
 ```
