@@ -23,20 +23,21 @@ import {
  * @title Opeth coins based on Opyn oTokens
  * @notice Contract that let's one enter tokenized hedged positions
  */
-contract Opyn is ERC20 {
+contract OpethOpyn is ERC20 {
     using SafeMath for uint;
     using SafeERC20 for IERC20;
+
+    uint internal constant OTOKEN_PRECISION = 8;
 
     AddressBookInterface public immutable addressBook;
     ControllerInterface public immutable controller;
     OtokenInterface public immutable oToken;
-    IERC20 public immutable underlyingAsset;
+
     IERC20 public immutable collateralAsset;
-
-    uint internal constant OPETH_PRECISION = 18;
-
-    /// @dev Precision for both Otokens and Opeth
-    uint internal constant OTOKEN_PRECISION = 8;
+    IERC20 public immutable underlyingAsset;
+    address public immutable strikeAsset;
+    uint public immutable expiryTimestamp;
+    uint public immutable underlyingDecimals;
 
     /// @dev Whether proceeds have been claimed post dispute period
     bool public proceedsClaimed;
@@ -44,48 +45,68 @@ contract Opyn is ERC20 {
     /// @dev Collateral payout per Opeth token
     uint public unitPayout;
 
-    /// @dev Underlying asset precision decimals
-    uint internal underlyingDecimals;
+    event ClaimedProceeds();
 
     /**
      * @notice initalize the deployed contract
      * @param _oToken oToken contract address
      */
-    constructor(OtokenInterface _oToken, string memory name, string memory symbol)
+    constructor(
+        OtokenInterface _oToken,
+        AddressBookInterface _addressBook,
+        string memory name,
+        string memory symbol
+    )
         public
         ERC20(name, symbol) // initializes _decimals=18
     {
         // Not having this check makes testing easier. Decide later if there is merit in it
         // require(now < _oToken.expiryTimestamp(), "Opeth: oToken has expired");
 
-        AddressBookInterface _addressBook = AddressBookInterface(_oToken.addressBook());
-
-        address _underlyingAsset = _oToken.underlyingAsset();
-        underlyingDecimals = uint(ERC20Interface(_underlyingAsset).decimals());
-        underlyingAsset = IERC20(_underlyingAsset);
-
         controller = ControllerInterface(_addressBook.getController());
-        collateralAsset = IERC20(_oToken.collateralAsset());
-        oToken = _oToken;
+        (
+            address _collateralAsset,
+            address _underlyingAsset,
+            address _strikeAsset,
+            /* uint _strikePrice */,
+            uint _expiryTimestamp,
+            bool isPut
+        ) = _oToken.getOtokenDetails();
+        require(isPut, "NOT_PUT");
+
+        uint _underlyingDecimals = uint(ERC20Interface(_underlyingAsset).decimals());
+        require(_underlyingDecimals >= OTOKEN_PRECISION, "ASSET_INCOMPATIBLE");
+        underlyingDecimals = _underlyingDecimals;
+
+        underlyingAsset = IERC20(_underlyingAsset);
+        strikeAsset = _strikeAsset;
+        collateralAsset = IERC20(_collateralAsset);
+        expiryTimestamp = _expiryTimestamp;
         addressBook = _addressBook;
+        oToken = _oToken;
     }
 
     /**
      * @notice Mint Opeth tokens. Pulls oToken and underlying asset from msg.sender
-     * @param _amount Amount of Opeth to mint. Scaled by 10**OPETH_PRECISION = 1e18
+     * @param _amount Amount of Opeth to mint. Scaled by 10**OTOKEN_PRECISION = 1e8
      */
-    function mint(uint _amount) external {
+    function mintFor(address _destination, uint _amount) public {
+        uint oTokenQuantity = _amount.div(1e10);
         IERC20(address(oToken)).safeTransferFrom(
             msg.sender,
             address(this),
-            _amount.mul(10**OTOKEN_PRECISION).div(10**OPETH_PRECISION)
+            oTokenQuantity
         );
         underlyingAsset.safeTransferFrom(
             msg.sender,
             address(this),
-            opethToUnderlyingAssetQuantity(_amount, true)
+            oTokenToUnderlyingQuantity(oTokenQuantity)
         );
-        _mint(msg.sender, _amount);
+        _mint(_destination, _amount);
+    }
+
+    function mint(uint _amount) external {
+        mintFor(msg.sender, _amount);
     }
 
     /**
@@ -93,45 +114,24 @@ contract Opyn is ERC20 {
      * @param _amount Amount of Opeth to redeem
      */
     function redeem(uint _amount) external {
+        uint oTokenQuantity = _amount.div(1e10);
         if (proceedsClaimed) {
-            _processPayout(_amount);
-        } else if (controller.isSettlementAllowed(address(oToken))) {
+            _processPayout(oTokenQuantity);
+        } else if (isSettlementAllowed()) {
             claimProceeds();
-            _processPayout(_amount);
+            _processPayout(oTokenQuantity);
         } else {
             // send back vanilla OTokens, because it is not yet time for settlement
             IERC20(address(oToken)).safeTransfer(
                 msg.sender,
-                _amount.mul(10**OTOKEN_PRECISION).div(1e18)
+                oTokenQuantity
             );
         }
         _burn(msg.sender, _amount);
         underlyingAsset.safeTransfer(
             msg.sender,
-            opethToUnderlyingAssetQuantity(_amount, false)
+            oTokenToUnderlyingQuantity(oTokenQuantity)
         );
-    }
-
-    /**
-     * @notice Opeth to underlying asset amount
-     * @param _amount Amount of Opeth to determine underlying asset amount for.
-     */
-    function opethToUnderlyingAssetQuantity(uint _amount, bool _roundUp)
-        public
-        view
-        returns (uint)
-    {
-        if (underlyingDecimals == OPETH_PRECISION) {
-            return _amount;
-        }
-        if (underlyingDecimals > OPETH_PRECISION) {
-            return _amount.mul(10**(underlyingDecimals - OPETH_PRECISION));
-        }
-        uint amount = _amount.div(10**(OPETH_PRECISION - underlyingDecimals));
-        if (_roundUp) {
-            return amount.add(1);
-        }
-        return amount;
     }
 
     /**
@@ -148,29 +148,42 @@ contract Opyn is ERC20 {
 
         unitPayout = MarginCalculatorInterface(addressBook.getMarginCalculator()).getExpiredPayoutRate(address(oToken));
         require(
-            unitPayout.mul(totalSupply()).div(10**OPETH_PRECISION) <= collateralAsset.balanceOf(address(this)),
+            unitPayout.mul(_actions[0].amount).div(10**OTOKEN_PRECISION) <= collateralAsset.balanceOf(address(this)),
             "oToken redeem sanity failed"
         );
         proceedsClaimed = true;
+        emit ClaimedProceeds();
+    }
+
+    /**
+     * @notice Opeth to underlying asset amount
+     * @param _amount Amount of Opeth to determine underlying asset amount for.
+     */
+    function oTokenToUnderlyingQuantity(uint _amount)
+        public
+        view
+        returns (uint)
+    {
+        return _amount.mul(10**(underlyingDecimals - OTOKEN_PRECISION));
+    }
+
+    function isSettlementAllowed() public view returns (bool) {
+        return controller.isSettlementAllowed(
+            address(underlyingAsset),
+            address(strikeAsset),
+            address(collateralAsset),
+            expiryTimestamp
+        );
     }
 
     /**
      * @notice Process collateralAsset payout
-     * @param _amount Amount of Opeth to process payout for
+     * @param _amount Amount of oTokens to process payout for.
      */
     function _processPayout(uint _amount) internal {
-        uint payout = unitPayout.mul(_amount).div(10**OPETH_PRECISION);
+        uint payout = unitPayout.mul(_amount).div(10**OTOKEN_PRECISION);
         if (payout > 0) {
             collateralAsset.safeTransfer(msg.sender, payout);
         }
     }
-
-    receive() external payable {
-        revert("Cannot receive ETH");
-    }
-
-    fallback() external payable {
-        revert("Cannot receive ETH");
-    }
 }
-

@@ -11,9 +11,9 @@ module.exports = {
         local: {
             url: 'http://localhost:8545'
         },
-        hardhat: {
-            chainId: 1,
-        }
+        // hardhat: {
+        //     chainId: 3,
+        // }
     },
     mocha: {
         timeout: 0

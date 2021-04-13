@@ -3,7 +3,7 @@ pragma solidity 0.6.10;
 pragma experimental ABIEncoderV2;
 
 interface OtokenInterface {
-    function addressBook() external view returns (address);
+    // function addressBook() external view returns (address);
 
     function underlyingAsset() external view returns (address);
 
@@ -51,7 +51,12 @@ interface AddressBookInterface {
 
 interface ControllerInterface {
     function operate(Actions.ActionArgs[] memory _actions) external;
-    function isSettlementAllowed(address _otoken) external view returns (bool);
+    function isSettlementAllowed(
+        address _underlying,
+        address _strike,
+        address _collateral,
+        uint256 _expiry
+    ) external view returns (bool);
 }
 
 interface MarginCalculatorInterface {

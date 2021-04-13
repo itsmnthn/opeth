@@ -1,12 +1,11 @@
 const { expect } = require('chai')
 
 const {
-    getWethContract,
-    getUSDCContract,
+    constants,
     getWeth,
-    impersonateAccount,
-    constants: { _1e18, _1e8, ZERO }
+    impersonateAccount
 } = require('../../utils')
+const { _1e18, _1e8, ZERO } = constants
 
 const blockNumber = 12106275
 const oWETHUSDC = '0x58cea0b182381cde8c38cb16bf7f8260cba9997f' // oWETHUSDC/USDC-26MAR21-800P
@@ -23,8 +22,8 @@ describe('oToken isSettlementAllowed=false', function() {
                 }
             }]
         })
-        const [ Opyn, signers ] = await Promise.all([
-            ethers.getContractFactory('Opyn'),
+        const [ Opeth, signers ] = await Promise.all([
+            ethers.getContractFactory('OpethOpyn'),
             ethers.getSigners(),
             impersonateAccount(oTokenWhale)
         ])
@@ -34,12 +33,12 @@ describe('oToken isSettlementAllowed=false', function() {
         opethAmount = _1e18.mul(2)
         oTokenAmount = _1e8.mul(2)
         ;([ weth, usdc, oToken, opyn ] = await Promise.all([
-            getWethContract(),
-            getUSDCContract(),
+            ethers.getContractAt('IERC20', constants.contracts.mainnet.weth),
+            ethers.getContractAt('IERC20', constants.contracts.mainnet.usdc),
             ethers.getContractAt('IERC20', oWETHUSDC),
-            Opyn.deploy(oWETHUSDC, 'Opeth', 'OPETH'),
-            getWeth(alice, wethAmount)
+            Opeth.deploy(oWETHUSDC, constants.contracts.mainnet.addressBook, 'Opeth', 'OPETH'),
         ]))
+        await getWeth(alice, wethAmount)
         const controller = await ethers.getContractAt('ControllerInterface', await opyn.controller())
         expect(await controller.isSettlementAllowed(oToken.address)).to.be.false
 
